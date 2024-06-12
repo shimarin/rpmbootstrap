@@ -250,7 +250,9 @@ static std::vector<std::string> determine_rpms_to_install(const PackageDependenc
     return std::vector(rpms.begin(), rpms.end());
 }
 
-static void install_rpms(const std::filesystem::path& root_dir, const std::vector<std::filesystem::path>& local_rpm_files)
+static void install_rpms(const std::filesystem::path& root_dir, 
+    const std::vector<std::filesystem::path>& local_rpm_files,
+    bool nosignature = false)
 {
     auto pid = fork();
     if (pid < 0) throw std::runtime_error("fork() failed");
@@ -264,6 +266,7 @@ static void install_rpms(const std::filesystem::path& root_dir, const std::vecto
         argv[3] = strdup("-r");
         argv[4] = strdup(std::filesystem::canonical(root_dir).c_str());
         int i = 5;
+        if (nosignature) argv[i++] = strdup("--nosignature");
         for (const auto& local_rpm_file:local_rpm_files) {
             argv[i++] = strdup(local_rpm_file.c_str());
         }
@@ -279,7 +282,8 @@ static void install_rpms(const std::filesystem::path& root_dir, const std::vecto
 }
 
 static int _main(const std::string& base_url, const std::filesystem::path& root_dir, 
-    const std::vector<std::string>& packages, const std::vector<std::string>& dependency_excludes = {})
+    const std::vector<std::string>& packages, const std::vector<std::string>& dependency_excludes = {},
+    bool nosignature = false)
 {
     if (!std::filesystem::is_directory(root_dir)) throw std::runtime_error(root_dir.string() + " is not a directory.");
 
@@ -319,7 +323,7 @@ static int _main(const std::string& base_url, const std::filesystem::path& root_
         }
         local_rpm_files.push_back(local_rpm_file);
     }
-    install_rpms(root_dir, local_rpm_files); 
+    install_rpms(root_dir, local_rpm_files, nosignature); 
     std::cout << "Cleaning up working directory..." << std::endl;
     std::filesystem::remove_all(work_dir);
     std::cout << "Done." << std::endl;
@@ -345,6 +349,7 @@ int main(int argc, char* argv[])
 {
     argparse::ArgumentParser program(argv[0]);
     program.add_argument("-x", "--dependency-exclude").append();
+    program.add_argument("--no-signature").default_value(false).implicit_value(true).help("Do not check package signature");
     program.add_argument("base-url").nargs(1).help("Base URL of distribution");
     program.add_argument("root_dir").nargs(1).help("Root directory to bootstrap");
     program.add_argument("packages").nargs(argparse::nargs_pattern::at_least_one).help("packages to install");
@@ -364,7 +369,8 @@ int main(int argc, char* argv[])
         return _main(
             base_url, program.get("root_dir"), 
             program.get<std::vector<std::string>>("packages"), 
-            program.get<std::vector<std::string>>("-x")
+            program.get<std::vector<std::string>>("-x"),
+            program.get<bool>("--no-signature")
         );
     }
     catch (const std::runtime_error& err) {
