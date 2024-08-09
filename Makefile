@@ -5,5 +5,5 @@ rpmbootstrap: rpmbootstrap.cpp
 
 install: rpmbootstrap
 	mkdir -p $(DESTDIR)/usr/bin
-	cp -a rpmbootstrap /usr/bin/
+	cp -a rpmbootstrap $(DESTDIR)/usr/bin/
 
