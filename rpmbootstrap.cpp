@@ -136,7 +136,7 @@ static void fetch(const std::string& url, const std::filesystem::path local_file
     close(fd);
 }
 
-static std::string get_primary_xml_gz_url(const std::string& base_url, const std::filesystem::path& repomd_xml)
+static std::string get_primary_xml_compressed_url(const std::string& base_url, const std::filesystem::path& repomd_xml)
 {
     std::shared_ptr<xmlDoc> doc(xmlReadFile(repomd_xml.c_str(), NULL, 0), xmlFreeDoc);
     if (!doc) throw std::runtime_error("Error parsing " + repomd_xml.string());
@@ -162,6 +162,21 @@ static void decompress_gz(const std::filesystem::path& gzfile)
     waitpid(pid, &wstatus, 0);
 
     if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) throw std::runtime_error("Gunzip failed");
+}
+
+static void decompress_zst(const std::filesystem::path& zstfile)
+{
+    auto pid = fork();
+    if (pid < 0) throw std::runtime_error("fork() failed");
+    //else
+    if (pid == 0) {
+        _exit(execlp("zstd", "zstd", "-d", "--rm", zstfile.c_str(), NULL));
+    }
+    //else
+    int wstatus;
+    waitpid(pid, &wstatus, 0);
+
+    if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) throw std::runtime_error("Zstd decompression failed");
 }
 
 struct Package {
@@ -292,19 +307,22 @@ static int _main(const std::string& base_url, const std::filesystem::path& root_
 
     auto primary_xml = work_dir / "primary.xml";
     if (!std::filesystem::exists(primary_xml)) {
-        auto primary_xml_gz = work_dir / "primary.xml.gz";
-        if (!std::filesystem::exists(primary_xml_gz)) {
-            auto repomd_xml = work_dir / "repomd.xml";
-            if (!std::filesystem::exists(repomd_xml)) {
-                auto remomd_xml_url = base_url + "repodata/repomd.xml";
-                std::cout << "Fetching " << remomd_xml_url << "..." << std::endl;
-                fetch(remomd_xml_url, repomd_xml);
-            }
-            auto primary_xml_gz_url = get_primary_xml_gz_url(base_url, repomd_xml);
-            std::cout << "Fetching " << primary_xml_gz_url << "..." << std::endl;
-            fetch(primary_xml_gz_url, primary_xml_gz);
+        auto repomd_xml = work_dir / "repomd.xml";
+        if (!std::filesystem::exists(repomd_xml)) {
+            auto repomd_xml_url = base_url + "repodata/repomd.xml";
+            std::cout << "Fetching " << repomd_xml_url << "..." << std::endl;
+            fetch(repomd_xml_url, repomd_xml);
         }
-        decompress_gz(primary_xml_gz); // to produce primary_xml
+        auto primary_xml_compressed_url = get_primary_xml_compressed_url(base_url, repomd_xml);
+        auto ext = std::filesystem::path(primary_xml_compressed_url).extension().string();
+        auto primary_xml_compressed = work_dir / ("primary.xml" + ext);
+        if (!std::filesystem::exists(primary_xml_compressed)) {
+            std::cout << "Fetching " << primary_xml_compressed_url << "..." << std::endl;
+            fetch(primary_xml_compressed_url, primary_xml_compressed);
+        }
+        if (ext == ".gz") decompress_gz(primary_xml_compressed);
+        else if (ext == ".zst") decompress_zst(primary_xml_compressed);
+        else throw std::runtime_error("Unsupported compression format: " + ext);
     }
 
     struct utsname un;
