@@ -268,16 +268,16 @@ static std::vector<std::string> determine_rpms_to_install(const PackageDependenc
     return std::vector(rpms.begin(), rpms.end());
 }
 
-static void install_rpms(const std::filesystem::path& root_dir, 
+static void install_rpms(const std::filesystem::path& root_dir,
     const std::vector<std::filesystem::path>& local_rpm_files,
-    bool nosignature = false)
+    bool nosignature = false, bool noscripts = false)
 {
     auto pid = fork();
     if (pid < 0) throw std::runtime_error("fork() failed");
     //else
     if (pid == 0) {
         // "rpm -Uvh -r /root_dir work_dir/*.rpm"
-        char** argv = (char**)malloc(sizeof(char*) * (local_rpm_files.size() + 6));
+        char** argv = (char**)malloc(sizeof(char*) * (local_rpm_files.size() + 7));
         argv[0] = strdup("rpm");
         argv[1] = strdup("-Uvh");
         argv[2] = strdup("--force");
@@ -285,6 +285,7 @@ static void install_rpms(const std::filesystem::path& root_dir,
         argv[4] = strdup(std::filesystem::canonical(root_dir).c_str());
         int i = 5;
         if (nosignature) argv[i++] = strdup("--nosignature");
+        if (noscripts) argv[i++] = strdup("--noscripts");
         for (const auto& local_rpm_file:local_rpm_files) {
             argv[i++] = strdup(local_rpm_file.c_str());
         }
@@ -299,9 +300,9 @@ static void install_rpms(const std::filesystem::path& root_dir,
 
 }
 
-static int _main(const std::string& base_url, const std::filesystem::path& root_dir, 
+static int _main(const std::string& base_url, const std::filesystem::path& root_dir,
     const std::vector<std::string>& packages, const std::vector<std::string>& dependency_excludes = {},
-    bool nosignature = false)
+    bool nosignature = false, bool noscripts = false)
 {
     if (!std::filesystem::is_directory(root_dir)) throw std::runtime_error(root_dir.string() + " is not a directory.");
 
@@ -344,7 +345,7 @@ static int _main(const std::string& base_url, const std::filesystem::path& root_
         }
         local_rpm_files.push_back(local_rpm_file);
     }
-    install_rpms(root_dir, local_rpm_files, nosignature); 
+    install_rpms(root_dir, local_rpm_files, nosignature, noscripts);
     std::cout << "Cleaning up working directory..." << std::endl;
     std::filesystem::remove_all(work_dir);
     std::cout << "Done." << std::endl;
@@ -412,6 +413,7 @@ int main(int argc, char* argv[])
     argparse::ArgumentParser program(argv[0]);
     program.add_argument("-x", "--dependency-exclude").append();
     program.add_argument("--no-signature").default_value(false).implicit_value(true).help("Do not check package signature");
+    program.add_argument("--no-scripts").default_value(false).implicit_value(true).help("Do not execute scriptlets");
     program.add_argument("base-url").nargs(1).help("Base URL of distribution");
     program.add_argument("root_dir").nargs(1).help("Root directory to bootstrap");
     program.add_argument("packages").nargs(argparse::nargs_pattern::at_least_one).help("packages to install");
@@ -429,10 +431,11 @@ int main(int argc, char* argv[])
 
     try {
         return _main(
-            base_url, program.get("root_dir"), 
-            program.get<std::vector<std::string>>("packages"), 
+            base_url, program.get("root_dir"),
+            program.get<std::vector<std::string>>("packages"),
             program.get<std::vector<std::string>>("-x"),
-            program.get<bool>("--no-signature")
+            program.get<bool>("--no-signature"),
+            program.get<bool>("--no-scripts")
         );
     }
     catch (const std::runtime_error& err) {
