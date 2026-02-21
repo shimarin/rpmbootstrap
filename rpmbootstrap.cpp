@@ -8,6 +8,7 @@
  */
 
 #include <string.h>
+#include <unistd.h>
 #include <sys/wait.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
@@ -22,6 +23,8 @@
 #include <curl/curl.h>
 
 #include <argparse/argparse.hpp>
+
+std::optional<std::string> rpm_version;
 
 static void for_each_node(xmlNodeSetPtr nodeset, std::function<void(xmlNodePtr)> func)
 {
@@ -348,6 +351,40 @@ static int _main(const std::string& base_url, const std::filesystem::path& root_
     return 0;
 }
 
+static std::optional<std::string> get_rpm_version()
+{
+    int pipefd[2];
+    if (pipe(pipefd) < 0) return std::nullopt;
+
+    auto pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return std::nullopt;
+    }
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        _exit(execlp("rpm", "rpm", "--version", NULL));
+    }
+    close(pipefd[1]);
+
+    char buf[256] = {};
+    ssize_t n = read(pipefd[0], buf, sizeof(buf) - 1);
+    close(pipefd[0]);
+
+    int wstatus;
+    waitpid(pid, &wstatus, 0);
+
+    if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0 || n <= 0) return std::nullopt;
+
+    std::string result(buf, n);
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+        result.pop_back();
+    return result;
+}
+
 #ifdef __VSCODE_ACTIVE_FILE__
 #define __USE_REAL_MAIN__
 #ifndef __USE_REAL_MAIN__
@@ -365,6 +402,13 @@ int main(int argc, char* argv[])
 #ifdef __USE_REAL_MAIN__
 int main(int argc, char* argv[])
 {
+    rpm_version = get_rpm_version();
+    if (!rpm_version) {
+        std::cerr << "rpm not installed" << std::endl;
+        return 1;
+    }
+    std::cout << *rpm_version << std::endl;
+
     argparse::ArgumentParser program(argv[0]);
     program.add_argument("-x", "--dependency-exclude").append();
     program.add_argument("--no-signature").default_value(false).implicit_value(true).help("Do not check package signature");
